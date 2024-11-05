@@ -19,3 +19,9 @@ If you want to run this script automatically, you can add it to your crontab. Fo
 0 1 * * * /usr/local/bin/space_manager.sh
 
 Testing: Initially run the script with DEBUG=true in terra-space_config.sh to test without performing actual deletions/moves | check log file.
+
+Example Log Output
+
+Mon Nov  6 14:30:20 1964 - MOVE from TV-BLURAY TEST.THIS.IS-OLD - Moved to /_ARCHIVE/TV-BLURAY - Freed up 250 MB
+
+Mon Nov  6 14:30:25 1964 - WIPE from TV-BLURAY TEST.THIS.IS-OLD - 250 MB
