@@ -19,7 +19,6 @@
 source /glftpd/bin/terra-space_config.sh  # Adjust this path as necessary
 #
 ######################### FUNCTION DEFINITIONS #######################################
-
 # Function to check free space on a device
 check_free_space() {
     local device="$1"
@@ -56,111 +55,69 @@ is_within_security_path() {
     [[ "$item" =~ $SECURITY_PATH ]]
 }
 
-# Manage space by moving or wiping old directories
-manage_space() {
-    local subdir="$1"
-    local device="$2"
-    local start_threshold="$3"
-    local stop_threshold="$4"
-    local archive_path="$5"
-    local item_count=0  # Counter for moved or deleted items
+# Main execution loop for managing space in specified subdirectories
+for entry in "${SUBDIR_CONFIGS[@]}"; do
+    IFS=':' read -r subdir device start_threshold stop_threshold archive_path <<< "$entry"
 
     # Check if the subdirectory exists
     if [[ ! -d "$MAIN_DIR/$subdir" ]]; then
-        if [[ "$DEBUG" == "true" ]]; then
-            log_message "DEBUG" "$subdir" "Subdirectory $MAIN_DIR/$subdir does not exist. Skipping."
-        fi
-        return
+        log_message "ERROR" "$subdir" "Subdirectory does not exist. Skipping."
+        continue
     fi
 
-    # Check free space on the device before starting actions
-    local initial_free_space=$(check_free_space "$device")
+    # **New Logic**: Count the directories in the subcategory
+    dir_count=$(find "$MAIN_DIR/$subdir" -mindepth 1 -maxdepth 1 -type d | wc -l)
 
-    # Check if action is required
-    if (( initial_free_space > start_threshold )); then
-        log_message "INFO" "$subdir" "Free space ($(convert_size $initial_free_space)) is above the start threshold ($(convert_size $start_threshold)). No action taken."
-        return
+    # Skip if there are fewer than 5 directories
+    if (( dir_count < 5 )); then
+        log_message "INFO" "$subdir" "Fewer than 5 directories found. Skipping."
+        continue
     fi
 
-    log_message "INFO" "$subdir" "Starting space management as free space ($(convert_size $initial_free_space)) is below start threshold ($(convert_size $start_threshold))."
-
-    # **NEW**: Count eligible items for deletion/moving
-    local eligible_items=0
-    for item in "$MAIN_DIR/$subdir"/*; do
-        # Ensure item is within the allowed security path and not excluded
-        if is_within_security_path "$item"; then
-            local skip=false
-            for exclude in "${EXCLUDE_PATTERNS[@]}"; do
-                [[ "$item" == *"$exclude"* ]] && skip=true && break
-            done
-            [[ "$skip" == "false" ]] && ((eligible_items++))
-        fi
-    done
-    # **NEW**: Check if there are enough items to process
-    if (( eligible_items < MAX_ITEMS_PER_RUN )); then
-        log_message "INFO" "$subdir" "Less than $MAX_ITEMS_PER_RUN eligible items found. Skipping."
-        return
+    # Get the oldest directory within the main subdirectory (exclude subdirectories like SAMPLE)
+    oldest_dir=$(find "$MAIN_DIR/$subdir" -mindepth 1 -maxdepth 1 -type d -exec ls -td {} + | tail -n 1)
+    
+    # If there's no directory found, skip
+    if [[ -z "$oldest_dir" ]]; then
+        log_message "INFO" "$subdir" "No directories found for cleanup. Skipping."
+        continue
     fi
 
-    # Iterate over items in the directory to delete/move them
-    for item in "$MAIN_DIR/$subdir"/*; do
-        # Ensure item is within the allowed security path
-        if ! is_within_security_path "$item"; then
-            log_message "SKIP" "$item" "Outside SECURITY_PATH ($SECURITY_PATH)"
-            continue
-        fi
+    # Calculate the size of the oldest directory
+    item_size=$(du -sm "$oldest_dir" | cut -f1)
+    item_size_converted=$(convert_size "$item_size")
+    item_name=$(basename "$oldest_dir")  # Get the base name of the item
 
-        # Skip excluded files/directories
-        for exclude in "${EXCLUDE_PATTERNS[@]}"; do
-            [[ "$item" == *"$exclude"* ]] && continue 2
-        done
+    # Debug message
+    log_message "[DEBUG] Action" "$oldest_dir" "$item_size_converted (simulation)"
 
-        # Calculate size of item before deletion/move
-        local item_size=$(du -sm "$item" | cut -f1)
-        local item_size_converted=$(convert_size "$item_size")
-        local item_name=$(basename "$item")  # Get the base name of the item
+    # If DEBUG mode is true, don't actually move or wipe the directory, just log the action
+    if [[ "$DEBUG" == "true" ]]; then
+        log_message "[DEBUG] SKIP ACTION" "$oldest_dir" "Simulation mode enabled. No action performed."
+        continue
+    fi
 
-        if [[ "$DEBUG" == "true" ]]; then
-            log_message "[DEBUG] ${ACTION_MODE}" "$item" "$item_size_converted (simulation)"
-        else
-            if [[ "$ACTION_MODE" == "move" ]]; then
-                # Move item to the appropriate archive directory
-                if mv "$item" "$archive_path"; then
-                    log_message "MOVE" "from $subdir $item_name" "Moved to /_ARCHIVE/${subdir} - Freed up $item_size_converted"
-                    ((item_count++))  # Increment the counter
-                else
-                    log_message "ERROR" "$item" "Failed to move"
-                fi
-            elif [[ "$ACTION_MODE" == "wipe" ]]; then
-                # Delete item
-                if rm -rf "$item"; then
-                    log_message "WIPE" "from $subdir $item_name" "$item_size_converted"
-                    ((item_count++))  # Increment the counter
-                else
-                    log_message "ERROR" "$item" "Failed to delete"
-                fi
+    # Check if space is needed and act accordingly
+    free_space=$(check_free_space "$device")
+    if (( free_space < stop_threshold )); then
+        # Only move or wipe the directory if the free space is below the threshold
+        if [[ "$ACTION_MODE" == "move" ]]; then
+            # Move the oldest directory to the archive path
+            if mv "$oldest_dir" "$archive_path"; then
+                log_message "MOVE" "from $subdir $item_name" "Moved to /_ARCHIVE/${subdir} - Freed up $item_size_converted"
+            else
+                log_message "ERROR" "$oldest_dir" "Failed to move"
+            fi
+        elif [[ "$ACTION_MODE" == "wipe" ]]; then
+            # Delete the oldest directory
+            if rm -rf "$oldest_dir"; then
+                log_message "WIPE" "from $subdir $item_name" "$item_size_converted"
+            else
+                log_message "ERROR" "$oldest_dir" "Failed to delete"
             fi
         fi
-
-        # Stop if we've reached the maximum number of items processed
-        if (( item_count >= MAX_ITEMS_PER_RUN )); then
-            log_message "INFO" "$subdir" "Maximum of $MAX_ITEMS_PER_RUN items processed for $subdir. Stopping further actions."
-            break
-        fi
-        # Re-check free space after each deletion/move
-        local free_space=$(check_free_space "$device")
-        if (( free_space > stop_threshold )); then
-            log_message "INFO" "$subdir" "Stop threshold ($(convert_size $stop_threshold)) reached. Stopping further actions."
-            break
-        fi
-    done
-}
-
-########################### MAIN EXECUTION LOOP ######################################
-
-# Iterate over each subdirectory configuration and manage space
-for entry in "${SUBDIR_CONFIGS[@]}"; do
-    IFS=':' read -r subdir device start_threshold stop_threshold archive_path <<< "$entry"
-    manage_space "$subdir" "$device" "$start_threshold" "$stop_threshold" "$archive_path"
+    else
+        log_message "INFO" "$subdir" "Free space is above the threshold, no action required."
+    fi
 done
 #eof
