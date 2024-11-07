@@ -1,8 +1,15 @@
 #!/bin/bash
+# bump to V1.3
 ###########################################################################################################
-# bump to V1.2 
+# Changelog.....:
+# - v1.2
 # This is the main script, including all configurations, free space checking, logging, and handling of non-existent directories.
 # Debug Logging for Missing Directories: added
+# - V1.3
+# Minimum Item Check: Before attempting deletions/moves, manage_space ensures that at least MAX_ITEMS_PER_RUN eligible items are in the subdirectory.
+# Size Conversion: Output size units are adjustable (MB, GB, or TB).
+# Logging: Detailed logs for each action, including simulation logs if DEBUG="true".
+# Loop Control: Stops processing when either MAX_ITEMS_PER_RUN is reached or free space exceeds stop_threshold.
 ###########################################################################################################
 #
 # Load the configuration
@@ -52,6 +59,7 @@ manage_space() {
     local start_threshold="$3"
     local stop_threshold="$4"
     local archive_path="$5"
+    local item_count=0  # Counter for moved or deleted items
 
     # Check if the subdirectory exists
     if [[ ! -d "$MAIN_DIR/$subdir" ]]; then
@@ -67,6 +75,25 @@ manage_space() {
     # Check if action is required
     if (( initial_free_space > start_threshold )); then
         log_message "INFO" "$subdir" "Free space ($(convert_size $initial_free_space)) is above the start threshold ($(convert_size $start_threshold)). No action taken."
+        return
+    fi
+
+    # **NEW**: Count eligible items for deletion/moving
+    local eligible_items=0
+    for item in "$MAIN_DIR/$subdir"/*; do
+        # Ensure item is within the allowed security path and not excluded
+        if is_within_security_path "$item"; then
+            local skip=false
+            for exclude in "${EXCLUDE_PATTERNS[@]}"; do
+                [[ "$item" == *"$exclude"* ]] && skip=true && break
+            done
+            [[ "$skip" == "false" ]] && ((eligible_items++))
+        fi
+    done
+
+    # **NEW**: Check if there are enough items to process
+    if (( eligible_items < MAX_ITEMS_PER_RUN )); then
+        log_message "INFO" "$subdir" "Less than $MAX_ITEMS_PER_RUN eligible items found. Skipping."
         return
     fi
 
@@ -97,6 +124,7 @@ manage_space() {
                 # Move item to the appropriate archive directory
                 if mv "$item" "$archive_path"; then
                     log_message "MOVE" "from $subdir $item_name" "Moved to /_ARCHIVE/${subdir} - Freed up $item_size_converted"
+                    ((item_count++))  # Increment the counter
                 else
                     log_message "ERROR" "$item" "Failed to move"
                 fi
@@ -104,10 +132,17 @@ manage_space() {
                 # Delete item
                 if rm -rf "$item"; then
                     log_message "WIPE" "from $subdir $item_name" "$item_size_converted"
+                    ((item_count++))  # Increment the counter
                 else
                     log_message "ERROR" "$item" "Failed to delete"
                 fi
             fi
+        fi
+
+        # Stop if we've reached the maximum number of items processed
+        if (( item_count >= MAX_ITEMS_PER_RUN )); then
+            log_message "INFO" "$subdir" "Maximum of $MAX_ITEMS_PER_RUN items processed for $subdir. Stopping further actions."
+            break
         fi
 
         # Re-check free space after each deletion/move
