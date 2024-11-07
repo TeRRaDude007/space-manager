@@ -35,8 +35,11 @@ OUTPUT_UNIT="GB"
 # Debug mode: set to "true" for testing, "false" for production
 DEBUG="true"
 
-# Excluded patterns to skip certain directories or files
-EXCLUDE_PATTERNS=("lost&found")
+# Exclusion patterns (files and directories to skip)
+EXCLUDE_PATTERNS=(
+    "[NUKED]-"
+    "(incomplete)-"
+)
 
 # Maximum items to process per subdirectory in one run
 MAX_ITEMS_PER_RUN=5
