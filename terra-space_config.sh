@@ -21,6 +21,9 @@ DEBUG="true"
 # Excluded patterns to skip certain directories or files
 EXCLUDE_PATTERNS=("lost&found")
 
+# Maximum items to process per subdirectory in one run
+MAX_ITEMS_PER_RUN=5
+
 ## Subdirectory configurations with specific device and thresholds in MB
 ## Format: "subdirectory:device:start_threshold:stop_threshold" 
 ## WHEN WIPE
