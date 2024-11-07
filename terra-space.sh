@@ -18,8 +18,8 @@
 # Load the configuration
 source /glftpd/bin/terra-space_config.sh  # Adjust this path as necessary
 #
-############################## END OF CONFIG ##############################################################
-#!/bin/bash
+######################### FUNCTION DEFINITIONS #######################################
+
 # Function to check free space on a device
 check_free_space() {
     local device="$1"
@@ -84,38 +84,36 @@ manage_space() {
 
     log_message "INFO" "$subdir" "Starting space management as free space ($(convert_size $initial_free_space)) is below start threshold ($(convert_size $start_threshold))."
 
-    # **NEW**: Sort directories by modification time (oldest first) and store them in an array
-    mapfile -t sorted_items < <(find "$MAIN_DIR/$subdir" -mindepth 1 -maxdepth 1 -type d -printf '%T+ %p\n' | sort | awk '{print $2}')
-    
-    # Process each item in sorted order until stop threshold is reached or MAX_ITEMS_PER_RUN is processed
-    for item in "${sorted_items[@]}"; do
+    # **NEW**: Count eligible items for deletion/moving
+    local eligible_items=0
+    for item in "$MAIN_DIR/$subdir"/*; do
+        # Ensure item is within the allowed security path and not excluded
+        if is_within_security_path "$item"; then
+            local skip=false
+            for exclude in "${EXCLUDE_PATTERNS[@]}"; do
+                [[ "$item" == *"$exclude"* ]] && skip=true && break
+            done
+            [[ "$skip" == "false" ]] && ((eligible_items++))
+        fi
+    done
+    # **NEW**: Check if there are enough items to process
+    if (( eligible_items < MAX_ITEMS_PER_RUN )); then
+        log_message "INFO" "$subdir" "Less than $MAX_ITEMS_PER_RUN eligible items found. Skipping."
+        return
+    fi
+
+    # Iterate over items in the directory to delete/move them
+    for item in "$MAIN_DIR/$subdir"/*; do
         # Ensure item is within the allowed security path
         if ! is_within_security_path "$item"; then
             log_message "SKIP" "$item" "Outside SECURITY_PATH ($SECURITY_PATH)"
             continue
         fi
 
-        # **NEW**: Log the item for debug purposes
-        if [[ "$DEBUG" == "true" ]]; then
-            log_message "DEBUG" "$item" "Considered for cleanup"
-        fi
-
         # Skip excluded files/directories
         for exclude in "${EXCLUDE_PATTERNS[@]}"; do
             [[ "$item" == *"$exclude"* ]] && continue 2
         done
-
-        # **Skip directories starting with "[NUKED]-"**
-        if [[ -d "$item" && "$(basename "$item")" == "[NUKED]-"* ]]; then
-            log_message "SKIP" "$item" "Directory starts with '[NUKED]-'. Skipping."
-            continue
-        fi
-
-        # **Skip symlinks starting with "(incomplete)-"**
-        if [[ -L "$item" && "$(basename "$item")" == "(incomplete)-"* ]]; then
-            log_message "SKIP" "$item" "Symlink starts with '(incomplete)-'. Skipping."
-            continue
-        fi
 
         # Calculate size of item before deletion/move
         local item_size=$(du -sm "$item" | cut -f1)
@@ -149,7 +147,6 @@ manage_space() {
             log_message "INFO" "$subdir" "Maximum of $MAX_ITEMS_PER_RUN items processed for $subdir. Stopping further actions."
             break
         fi
-
         # Re-check free space after each deletion/move
         local free_space=$(check_free_space "$device")
         if (( free_space > stop_threshold )); then
@@ -159,7 +156,9 @@ manage_space() {
     done
 }
 
-# Main execution loop for managing space in specified subdirectories
+########################### MAIN EXECUTION LOOP ######################################
+
+# Iterate over each subdirectory configuration and manage space
 for entry in "${SUBDIR_CONFIGS[@]}"; do
     IFS=':' read -r subdir device start_threshold stop_threshold archive_path <<< "$entry"
     manage_space "$subdir" "$device" "$start_threshold" "$stop_threshold" "$archive_path"
