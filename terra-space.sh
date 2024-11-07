@@ -12,12 +12,14 @@
 # Loop Control: Stops processing when either MAX_ITEMS_PER_RUN is reached or free space exceeds stop_threshold.
 # Skipping [NUKED]- Directories: Any directory whose name starts with [NUKED]- will be skipped and logged as "SKIP".
 # Skipping (incomplete)- Symlinks: Any symbolic link with a name that starts with (incomplete)- will also be skipped and logged as "SKIP".
+# Fixed: This script now ensures it properly checks for recently created directories using mtime and logs directories considered for debugging.
 ###########################################################################################################
 #
 # Load the configuration
 source /glftpd/bin/terra-space_config.sh  # Adjust this path as necessary
 #
 ############################## END OF CONFIG ##############################################################
+#!/bin/bash
 # Function to check free space on a device
 check_free_space() {
     local device="$1"
@@ -80,33 +82,22 @@ manage_space() {
         return
     fi
 
-    # **NEW**: Count eligible items for deletion/moving
-    local eligible_items=0
-    for item in "$MAIN_DIR/$subdir"/*; do
-        # Ensure item is within the allowed security path and not excluded
-        if is_within_security_path "$item"; then
-            local skip=false
-            for exclude in "${EXCLUDE_PATTERNS[@]}"; do
-                [[ "$item" == *"$exclude"* ]] && skip=true && break
-            done
-            [[ "$skip" == "false" ]] && ((eligible_items++))
-        fi
-    done
-
-    # **NEW**: Check if there are enough items to process
-    if (( eligible_items < MAX_ITEMS_PER_RUN )); then
-        log_message "INFO" "$subdir" "Less than $MAX_ITEMS_PER_RUN eligible items found. Skipping."
-        return
-    fi
-
     log_message "INFO" "$subdir" "Starting space management as free space ($(convert_size $initial_free_space)) is below start threshold ($(convert_size $start_threshold))."
 
-    # Iterate over items in the directory to delete/move them
-    for item in "$MAIN_DIR/$subdir"/*; do
+    # **NEW**: Sort directories by modification time (oldest first) and store them in an array
+    mapfile -t sorted_items < <(find "$MAIN_DIR/$subdir" -mindepth 1 -maxdepth 1 -type d -printf '%T+ %p\n' | sort | awk '{print $2}')
+    
+    # Process each item in sorted order until stop threshold is reached or MAX_ITEMS_PER_RUN is processed
+    for item in "${sorted_items[@]}"; do
         # Ensure item is within the allowed security path
         if ! is_within_security_path "$item"; then
             log_message "SKIP" "$item" "Outside SECURITY_PATH ($SECURITY_PATH)"
             continue
+        fi
+
+        # **NEW**: Log the item for debug purposes
+        if [[ "$DEBUG" == "true" ]]; then
+            log_message "DEBUG" "$item" "Considered for cleanup"
         fi
 
         # Skip excluded files/directories
@@ -114,13 +105,13 @@ manage_space() {
             [[ "$item" == *"$exclude"* ]] && continue 2
         done
 
-        # **NEW**: Skip directories starting with "[NUKED]-"
+        # **Skip directories starting with "[NUKED]-"**
         if [[ -d "$item" && "$(basename "$item")" == "[NUKED]-"* ]]; then
             log_message "SKIP" "$item" "Directory starts with '[NUKED]-'. Skipping."
             continue
         fi
 
-        # **NEW**: Skip symlinks starting with "(incomplete)-"
+        # **Skip symlinks starting with "(incomplete)-"**
         if [[ -L "$item" && "$(basename "$item")" == "(incomplete)-"* ]]; then
             log_message "SKIP" "$item" "Symlink starts with '(incomplete)-'. Skipping."
             continue
