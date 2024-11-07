@@ -1,4 +1,21 @@
 #!/bin/bash
+# bump to V1.3
+###########################################################################################################
+# Changelog.....:
+# - v1.2
+# This is the main script, including all configurations, free space checking, logging, and handling of non-existent directories.
+# Debug Logging for Missing Directories: added
+# - V1.3
+# Minimum Item Check: Before attempting deletions/moves, manage_space ensures that at least MAX_ITEMS_PER_RUN eligible items are in the subdirectory.
+# Size Conversion: Output size units are adjustable (MB, GB, or TB).
+# Logging: Detailed logs for each action, including simulation logs if DEBUG="true".
+# Loop Control: Stops processing when either MAX_ITEMS_PER_RUN is reached or free space exceeds stop_threshold.
+# Skipping [NUKED]- Directories: Any directory whose name starts with [NUKED]- will be skipped and logged as "SKIP".
+# Skipping (incomplete)- Symlinks: Any symbolic link with a name that starts with (incomplete)- will also be skipped and logged as "SKIP".
+###########################################################################################################
+#
+#  CONFIG BELOW 
+#
 
 # Main directory where subdirectories are located
 MAIN_DIR="/glftpd/site"
