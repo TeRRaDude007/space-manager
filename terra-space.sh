@@ -10,6 +10,8 @@
 # Size Conversion: Output size units are adjustable (MB, GB, or TB).
 # Logging: Detailed logs for each action, including simulation logs if DEBUG="true".
 # Loop Control: Stops processing when either MAX_ITEMS_PER_RUN is reached or free space exceeds stop_threshold.
+# Skipping [NUKED]- Directories: Any directory whose name starts with [NUKED]- will be skipped and logged as "SKIP".
+# Skipping (incomplete)- Symlinks: Any symbolic link with a name that starts with (incomplete)- will also be skipped and logged as "SKIP".
 ###########################################################################################################
 #
 # Load the configuration
@@ -111,6 +113,18 @@ manage_space() {
         for exclude in "${EXCLUDE_PATTERNS[@]}"; do
             [[ "$item" == *"$exclude"* ]] && continue 2
         done
+
+        # **NEW**: Skip directories starting with "[NUKED]-"
+        if [[ -d "$item" && "$(basename "$item")" == "[NUKED]-"* ]]; then
+            log_message "SKIP" "$item" "Directory starts with '[NUKED]-'. Skipping."
+            continue
+        fi
+
+        # **NEW**: Skip symlinks starting with "(incomplete)-"
+        if [[ -L "$item" && "$(basename "$item")" == "(incomplete)-"* ]]; then
+            log_message "SKIP" "$item" "Symlink starts with '(incomplete)-'. Skipping."
+            continue
+        fi
 
         # Calculate size of item before deletion/move
         local item_size=$(du -sm "$item" | cut -f1)
